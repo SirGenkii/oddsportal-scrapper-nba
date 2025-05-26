@@ -7,7 +7,7 @@ import datetime
 
 
 
-BASE_URL = "https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/"
+BASE_URL = "https://www.oddsportal.com/basketball/usa/nba/results/"
 OUTPUT_DIR = "output"
 
 
@@ -50,15 +50,7 @@ def extract_seasons(soup: BeautifulSoup) -> list[tuple[str, str]]:
     seen = set()
     seasons = []
 
-    # # 1. Saisons depuis le <select>
-    # for opt in soup.select("select[onchange] option"):
-    #     label = opt.text.strip()
-    #     url = opt.get("value")
-    #     if url and url not in seen:
-    #         seasons.append((label, url))
-    #         seen.add(url)
 
-    # 2. Anciennes saisons via les <a> (en bas de page)
     for a in soup.select("div.flex.flex-wrap a.cursor-pointer"):
         label = a.text.strip()
         url = a.get("href")
@@ -66,7 +58,7 @@ def extract_seasons(soup: BeautifulSoup) -> list[tuple[str, str]]:
             seasons.append((label, url))
             seen.add(url)
 
-    return seasons
+    return seasons[:4]
 
 def extract_matches(soup: BeautifulSoup) -> list[dict]:
     matches = []
@@ -141,12 +133,14 @@ async def scrape_all_pages_for_season(page, base_url: str) -> list[dict]:
         
         pagination_block = page.locator("div.pagination")   
         
-        #last a.pagination-link in pagination_block, must contain "Next" text
+        #last a.pagination-link in pagination_block
         
         next_button = pagination_block.locator("a.pagination-link").last
         
-        if not next_button:
-            print("🔚 Aucune page suivante détectée.")
+        # find the text of the next button
+        next_button_text = await next_button.text_content()
+        if not next_button_text or "next" not in next_button_text.lower():
+            print("🔚 Aucune page suivante détectée, fin du scraping.")
             break
         
 
