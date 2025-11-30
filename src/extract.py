@@ -1,18 +1,24 @@
+from urllib.parse import urljoin
+
 from bs4 import BeautifulSoup
-from src.utils import normalize_date, clean_score
 
-# N'oublie pas de déclarer ces fonctions au-dessus
-def extract_seasons(soup: BeautifulSoup) -> list[tuple[str, str]]:
+from src.utils import clean_score, normalize_date
+
+
+def extract_seasons(soup: BeautifulSoup, base_url: str) -> list[tuple[str, str]]:
     seen = set()
-    seasons = []
-
+    seasons: list[tuple[str, str]] = []
 
     for a in soup.select("div.flex.flex-wrap a.cursor-pointer"):
         label = a.text.strip()
         url = a.get("href")
-        if url and url.startswith("http") and url not in seen:
-            seasons.append((label, url))
-            seen.add(url)
+        if not url:
+            continue
+        absolute_url = urljoin(base_url, url)
+        if absolute_url in seen:
+            continue
+        seasons.append((label, absolute_url))
+        seen.add(absolute_url)
 
     return seasons
 
@@ -46,8 +52,8 @@ def extract_matches(soup: BeautifulSoup) -> list[dict]:
         if len(teams) >= 2:
             home = teams[0].text.strip()
             away = teams[1].text.strip()
-            home_score = scores[0].text.strip() if len(scores) > 1 else ""
-            away_score = scores[1].text.strip() if len(scores) > 1 else ""
+            home_score = scores[0].text.strip() if len(scores) >= 1 else ""
+            away_score = scores[1].text.strip() if len(scores) >= 2 else ""
 
             matches.append({
                 "date": normalize_date(current_date),
