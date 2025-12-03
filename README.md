@@ -14,7 +14,7 @@ Scraper asynchrone basé sur Playwright pour récupérer les résultats et cotes
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+source venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 playwright install --with-deps
 ```
@@ -70,6 +70,12 @@ python main.py --sport nba        # Scraper la NBA (comportement par défaut)
 python main.py --sport atp        # Scraper tous les tournois ATP listés dans le CSV
 python main.py --sport atp --headless  # Lancer Playwright sans interface graphique
 python main.py --repair --sport atp        # Relance le run précedent avec --repair pour reprendre ou on en était si crash
+python main.py --sport nba --over_under    # Ajoute le scraping over/under (colonne handicap)
+python main.py --sport nba --over_under --start_minimized  # Idem mais minimise la fenêtre pour ne pas prendre le focus
+python main.py --sport nba --over_under --over_under_same_window  # Force l'ouverture des onglets over/under dans la même fenêtre (peut prendre le focus). Par défaut ils s'ouvrent en headless.
+python repair_over_under.py --sport nba  # Répare les lignes avec handicap vide en rechargeant les URLs stockées dans le dernier run
+python harvest_over_under_urls.py --sport nba  # Étape 1: collecte les URLs over/under sans ouvrir les pages détail
+python enrich_over_under_odds.py --sport nba    # Étape 2: enrichit les CSV d'URLs avec la colonne handicap
 
 ```
 
@@ -94,6 +100,21 @@ Chaque fichier CSV inclut les colonnes suivantes :
 - `away_score`
 - `home_odds`
 - `away_odds`
+- `handicap` (uniquement si `--over_under` est actif, JSON des pivots/odds over-under)
+- `url` (uniquement si `--over_under` est actif, lien direct vers l'onglet over/under du match)
+
+## Script de réparation over/under
+
+- Commande: `python repair_over_under.py --sport nba`
+- Comportement: cherche le dernier dossier `output/` contenant le sport, parcourt tous les CSV, et pour chaque ligne dont `handicap` est vide (`{}` ou champ vide), recharge l'URL stockée pour récupérer les odds over/under, met à jour la ligne, et enregistre un log `over_under_repair.log` dans le dossier du run.
+- Options: `--run_dir <chemin>` pour cibler un dossier d'output précis (par défaut: le plus récent pour le sport donné).
+
+## Pipeline en 2 étapes (over/under)
+- Étape 1: `python harvest_over_under_urls.py --sport nba`  
+  Scrape les pages de résultats, collecte les URLs over/under et enregistre un CSV par saison avec les colonnes `date,home_team,away_team,home_score,away_score,home_odds,away_odds,url,sport,tournament,season`.
+- Étape 2: `python enrich_over_under_odds.py --sport nba`  
+  Lit les CSV générés à l'étape 1 (dans le dernier dossier `output/<horodatage>/...`), ouvre chaque URL en headless, applique les règles de parsing over/under, ajoute la colonne `handicap`, et logge dans `over_under_enrich.log`.
+- Option `--run_dir <chemin>` (étape 2) pour cibler un dossier spécifique si besoin.
 - `sport`
 - `tournament`
 - `season`

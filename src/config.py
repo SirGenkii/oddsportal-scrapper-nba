@@ -9,6 +9,13 @@ NBA_BASE_URL = "https://www.oddsportal.com/basketball/usa/nba/results/"
 
 ATP_TOURNAMENTS_CSV = Path("data/tennis/oddsportal_atp_results_urls.csv")
 
+OVER_UNDER_DEFAULTS = {
+    "fragment": "over-under;1",
+    "preserve_query": False,
+    "preserve_existing_fragment": False,
+    "default_odds_value": 1.73,
+}
+
 
 SPORTS_CONFIG: dict[str, dict] = {
     "nba": {
@@ -20,11 +27,16 @@ SPORTS_CONFIG: dict[str, dict] = {
                 "results_url": NBA_BASE_URL,
             }
         ],
+        "supports_over_under": True,
+        "over_under_config": {
+            **OVER_UNDER_DEFAULTS,
+        },
     },
     "atp": {
         "label": "ATP",
         "emoji": "🎾",
         "tournaments_csv": ATP_TOURNAMENTS_CSV,
+        "supports_over_under": False,
     },
 }
 

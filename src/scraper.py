@@ -1,10 +1,12 @@
 import asyncio
 import contextlib
+import json
 
 from bs4 import BeautifulSoup
 from playwright.async_api import Error, TimeoutError
 
-from src.extract import extract_matches
+from src.extract import extract_matches, extract_over_under
+from src.utils import build_over_under_url
 
 
 async def scroll_to_bottom(page, step: int = 1000, delay: int = 500):
@@ -59,7 +61,81 @@ async def dismiss_overlays(page):
     )
 
 
-async def scrape_all_pages_for_season(page, base_url: str) -> list[dict]:
+async def scrape_over_under_for_match(
+    context, match_url: str, config: dict, over_under_url: str | None = None
+) -> dict:
+    """Open a new tab, navigate to over/under tab, and extract odds."""
+    tab = await context.new_page()
+    try:
+        url = (
+            over_under_url
+            or build_over_under_url(
+                match_url,
+                fragment=config.get("fragment", "over-under;1"),
+                preserve_query=config.get("preserve_query", False),
+                preserve_existing_fragment=config.get("preserve_existing_fragment", False),
+            )
+        )
+        await tab.goto(url, wait_until="networkidle")
+        await dismiss_overlays(tab)
+        with contextlib.suppress(TimeoutError):
+            await tab.wait_for_selector(".event-container", timeout=4000)
+        html = await tab.content()
+        soup = BeautifulSoup(html, "html.parser")
+        return extract_over_under(
+            soup, default_odds=config.get("default_odds_value", 1.73)
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort scraping
+        print(f"⚠️ Impossible de récupérer l'over/under pour {match_url}: {exc}")
+        return {}
+    finally:
+        with contextlib.suppress(Exception):
+            await tab.close()
+
+
+async def enrich_matches_with_over_under(
+    page,
+    matches: list[dict],
+    config: dict,
+    *,
+    over_under_context=None,
+) -> list[dict]:
+    context = over_under_context or page.context
+    enriched: list[dict] = []
+    for match in matches:
+        match_url = match.get("match_url")
+        handicap_data = {}
+        over_under_url = ""
+        if match_url:
+            over_under_url = build_over_under_url(
+                match_url,
+                fragment=config.get("fragment", "over-under;1"),
+                preserve_query=config.get("preserve_query", False),
+                preserve_existing_fragment=config.get("preserve_existing_fragment", False),
+            )
+            handicap_data = await scrape_over_under_for_match(
+                context, match_url, config, over_under_url=over_under_url
+            )
+
+        cleaned_match = {k: v for k, v in match.items() if k != "match_url"}
+        cleaned_match["handicap"] = json.dumps(
+            handicap_data, ensure_ascii=False, sort_keys=True
+        )
+        cleaned_match["url"] = over_under_url
+        enriched.append(cleaned_match)
+
+    return enriched
+
+
+async def scrape_all_pages_for_season(
+    page,
+    base_url: str,
+    *,
+    over_under: bool = False,
+    over_under_config: dict | None = None,
+    over_under_context=None,
+    with_links: bool = False,
+) -> list[dict]:
     all_matches = []
 
     await page.goto(base_url, wait_until="networkidle")
@@ -67,7 +143,17 @@ async def scrape_all_pages_for_season(page, base_url: str) -> list[dict]:
     await scroll_to_bottom(page)
     html = await page.content()
     soup = BeautifulSoup(html, "html.parser")
-    all_matches.extend(extract_matches(soup))
+    page_matches = extract_matches(
+        soup, base_url=page.url, with_links=over_under or with_links
+    )
+    if over_under and page_matches:
+        page_matches = await enrich_matches_with_over_under(
+            page,
+            page_matches,
+            over_under_config or {},
+            over_under_context=over_under_context,
+        )
+    all_matches.extend(page_matches)
 
     page_num = 1
     while True:
@@ -117,12 +203,25 @@ async def scrape_all_pages_for_season(page, base_url: str) -> list[dict]:
                 await page.wait_for_timeout(200)
                 next_button = pagination_locator().last        
 
-        await page.wait_for_timeout(3000)
+        await page.wait_for_load_state("networkidle")
+        with contextlib.suppress(Exception):
+            await page.wait_for_selector("div.eventRow", timeout=4000)
+        await page.wait_for_timeout(500)
         await scroll_to_bottom(page)
 
         html = await page.content()
         soup = BeautifulSoup(html, "html.parser")
-        all_matches.extend(extract_matches(soup))
+        page_matches = extract_matches(
+            soup, base_url=page.url, with_links=over_under or with_links
+        )
+        if over_under and page_matches:
+            page_matches = await enrich_matches_with_over_under(
+                page,
+                page_matches,
+                over_under_config or {},
+                over_under_context=over_under_context,
+            )
+        all_matches.extend(page_matches)
 
         page_num += 1
 

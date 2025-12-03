@@ -2,6 +2,7 @@
 import csv
 import re
 import unicodedata
+from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 
 import dateparser
@@ -40,6 +41,20 @@ def slugify(value: str) -> str:
 
 def build_output_path(today_dir: str, sport: str, tournament: str) -> Path:
     return OUTPUT_DIR / today_dir / slugify(sport) / slugify(tournament)
+
+
+def build_over_under_url(
+    match_url: str,
+    *,
+    fragment: str,
+    preserve_query: bool = False,
+    preserve_existing_fragment: bool = False,
+) -> str:
+    parsed = urlparse(match_url)
+    query = parsed.query if preserve_query else ""
+    final_fragment = parsed.fragment if preserve_existing_fragment and parsed.fragment else fragment
+    final_fragment = final_fragment.lstrip("#")
+    return urlunparse(parsed._replace(query=query, fragment=final_fragment))
 
 
 def save_matches_to_csv(

@@ -33,6 +33,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Reprend le dernier scraping inachevé (écrit dans le dernier dossier d'output).",
     )
+    parser.add_argument(
+        "--over_under",
+        action="store_true",
+        help="Active le scraping des over/under (NBA uniquement pour l'instant).",
+    )
+    parser.add_argument(
+        "--over_under_same_window",
+        action="store_true",
+        help="Ouvre les onglets over/under dans la même fenêtre (peut prendre le focus). Par défaut ils s'ouvrent en arrière-plan headless.",
+    )
+    parser.add_argument(
+        "--start_minimized",
+        action="store_true",
+        help="Lance la fenêtre navigateur minimisée (évite de prendre le focus en mode non-headless).",
+    )
     return parser.parse_args()
 
 
@@ -141,6 +156,9 @@ async def scrape_tournament(
     today_dir: str,
     emoji: str,
     skip_existing_season_slugs: set[str] | None = None,
+    over_under: bool = False,
+    over_under_config: dict | None = None,
+    over_under_context=None,
 ):
     print(f"\n{emoji} Scraping {sport.upper()} – {tournament_name}")
 
@@ -164,7 +182,13 @@ async def scrape_tournament(
             continue
 
         print(f"\n🚀 Scraping saison {season_label}")
-        matches = await scrape_all_pages_for_season(page, season_url)
+        matches = await scrape_all_pages_for_season(
+            page,
+            season_url,
+            over_under=over_under,
+            over_under_config=over_under_config,
+            over_under_context=over_under_context,
+        )
         if not matches:
             print(f"   ➜ Aucune rencontre trouvée pour {season_label}")
             continue
@@ -196,6 +220,12 @@ async def main():
     args = parse_args()
     sport = args.sport
     config = get_sport_config(sport)
+    over_under_enabled = bool(args.over_under)
+    sport_supports_over_under = config.get("supports_over_under", False)
+    if over_under_enabled and not sport_supports_over_under:
+        print("⚠️ Option --over_under ignorée : sport non supporté.")
+        over_under_enabled = False
+    over_under_same_window = bool(args.over_under_same_window)
 
     tournaments = load_tournaments(config)
     slug_to_name = {slugify(t["name"]): t["name"] for t in tournaments}
@@ -228,8 +258,15 @@ async def main():
         resume_reached = True
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=args.headless)
-        page = await browser.new_page()
+        launch_args = ["--start-minimized"] if args.start_minimized else None
+        browser = await p.chromium.launch(headless=args.headless, args=launch_args)
+        context = await browser.new_context()
+        page = await context.new_page()
+        over_under_context = None
+        bg_browser = None
+        if over_under_enabled and not args.headless and not over_under_same_window:
+            bg_browser = await p.chromium.launch(headless=True)
+            over_under_context = await bg_browser.new_context()
 
         for tournament in tournaments:
             tournament_slug = slugify(tournament["name"])
@@ -257,12 +294,20 @@ async def main():
                 today_dir=today_dir,
                 emoji=sport_emoji,
                 skip_existing_season_slugs=skip_seasons,
+                over_under=over_under_enabled,
+                over_under_config=config.get("over_under_config"),
+                over_under_context=over_under_context,
             )
 
         print(
             f"\n📈 Scraping terminé, résultats sauvegardés dans le dossier '{OUTPUT_DIR / today_dir}'"
         )
 
+        if over_under_context:
+            await over_under_context.close()
+        if bg_browser:
+            await bg_browser.close()
+        await context.close()
         await browser.close()
 
 
